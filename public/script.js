@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const form = document.getElementById('chat-form');
   const input = document.getElementById('user-input');
   const chatBox = document.getElementById('chat-box');
+  const sendButton = form.querySelector('button');
 
   // Make the chat box accessible by having screen readers announce new messages.
   chatBox.setAttribute('aria-live', 'polite');
@@ -9,10 +10,16 @@ document.addEventListener('DOMContentLoaded', () => {
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
 
-    const userMessage = input.value.trim();
-    if (!userMessage) {
-      return; // Don't send empty messages
+    const userMessage = input.value.trim(); // Trim the message
+    if (!userMessage || sendButton.disabled) {
+      return; // Don't send empty messages or while a request is in progress
     }
+
+    // Disable form controls to prevent multiple submissions
+    input.disabled = true;
+    sendButton.disabled = true;
+    // Optional: change button text to show it's working
+    sendButton.textContent = '...';
 
     appendMessage('User', userMessage);
     input.value = ''; // Clear the input field
@@ -55,6 +62,12 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error('Error sending message to chatbot:', error);
       removeThinkingMessage(); // Ensure thinking message is removed on error
       appendMessage('Bot', error.message || 'An unexpected error occurred.', 'error');
+    } finally {
+      // Re-enable form controls regardless of success or failure
+      input.disabled = false;
+      sendButton.disabled = false;
+      sendButton.textContent = 'Send';
+      input.focus(); // Set focus back to the input field for the next message
     }
   });
 
@@ -113,12 +126,31 @@ document.addEventListener('DOMContentLoaded', () => {
    * @returns {string} - The HTML formatted and sanitized text.
    */
   function processBotResponseText(text) {
+    // 1. Sanitize the entire input to prevent XSS. This converts characters like `<` and `>`
+    // into their HTML entities (e.g., `&lt;` and `&gt;`), disabling any raw HTML from the AI.
+    // This is a critical security step.
     const sanitizedText = escapeHTML(text);
-    const cleanedText = sanitizedText.trim().replace(/\n{3,}/g, '\n\n');
-    if (cleanedText === '') return '';
 
-    return cleanedText.split('\n\n')
-      .map(para => `<p>${para.replace(/\n/g, '<br>')}</p>`)
+    // 2. Normalize multiple newlines for consistent paragraph spacing and trim whitespace.
+    const cleanedText = sanitizedText.trim().replace(/\n{3,}/g, '\n\n');
+
+    if (cleanedText === '') {
+      return ''; // Handle cases where input is only whitespace.
+    }
+
+    // 3. Split by double newlines to create paragraphs.
+    const paragraphs = cleanedText.split('\n\n');
+
+    // 4. Map each paragraph to a <p> tag, converting single newlines inside to <br>,
+    //    and filter out any empty paragraphs that might result from extra newlines.
+    return paragraphs
+      .map(para => {
+        if (para.trim()) {
+          const paraWithBreaks = para.replace(/\n/g, '<br>');
+          return `<p>${paraWithBreaks}</p>`;
+        }
+        return '';
+      })
       .join('');
   }
 });
