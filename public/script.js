@@ -89,8 +89,13 @@ document.addEventListener('DOMContentLoaded', () => {
     senderNameElement.textContent = `${sender}: `;
 
     const messageTextElement = document.createElement('span');
-    // IMPORTANT: Use innerHTML only after sanitizing and formatting the text.
-    messageTextElement.innerHTML = processBotResponseText(text);
+    if (sender === 'Bot') {
+      // For bot messages, sanitize and then format for newlines.
+      messageTextElement.innerHTML = processBotResponseText(text);
+    } else {
+      // For user messages, just set the text content. It's safer and simpler.
+      messageTextElement.textContent = text;
+    }
 
     messageElement.appendChild(senderNameElement);
     messageElement.appendChild(messageTextElement);
@@ -111,6 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /**
    * A simple and effective way to escape HTML characters to prevent XSS attacks.
+   * It leverages the browser's own parser to safely handle text.
    * @param {string} str The potentially unsafe string.
    * @returns {string} The sanitized string.
    */
@@ -121,36 +127,89 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
+   * Applies inline markdown formatting (bold, italic, code) to a string.
+   * This should be applied after the string has been HTML-escaped.
+   * @param {string} text The sanitized text to format.
+   * @returns {string} Text with inline markdown converted to HTML tags.
+   */
+  function applyInlineMarkdown(text) {
+    return text
+      // Bold (e.g., **text** or __text__)
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/__(.*?)__/g, '<strong>$1</strong>')
+      // Italic (e.g., *text* or _text_)
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/_(.*?)_/g, '<em>$1</em>')
+      // Inline code (e.g., `code`)
+      .replace(/`(.*?)`/g, '<code>$1</code>');
+  }
+
+  /**
    * Processes the bot's response text to be safely displayed as HTML.
+   * It sanitizes the text, then converts basic markdown (code blocks, lists, bold, italic) to HTML.
    * @param {string} text - The raw text from the bot.
    * @returns {string} - The HTML formatted and sanitized text.
    */
   function processBotResponseText(text) {
-    // 1. Sanitize the entire input to prevent XSS. This converts characters like `<` and `>`
-    // into their HTML entities (e.g., `&lt;` and `&gt;`), disabling any raw HTML from the AI.
-    // This is a critical security step.
+    // 1. Sanitize the entire input to prevent XSS. This is the most critical step.
     const sanitizedText = escapeHTML(text);
 
-    // 2. Normalize multiple newlines for consistent paragraph spacing and trim whitespace.
-    const cleanedText = sanitizedText.trim().replace(/\n{3,}/g, '\n\n');
+    // 2. Extract code blocks to prevent markdown parsing inside them.
+    const codeBlocks = [];
+    let processedText = sanitizedText.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+      // Note: The code is already sanitized from step 1.
+      const languageClass = lang ? ` class="language-${lang}"` : '';
+      const block = `<pre><code${languageClass}>${code.trim()}</code></pre>`;
+      codeBlocks.push(block);
+      // Use a placeholder with newlines to ensure it's treated as a distinct block.
+      return `\n\n__CODE_BLOCK_${codeBlocks.length - 1}__\n\n`;
+    });
 
-    if (cleanedText === '') {
-      return ''; // Handle cases where input is only whitespace.
-    }
+    // 3. Normalize multiple newlines and split into blocks.
+    const blocks = processedText.trim().split(/\n\n+/);
 
-    // 3. Split by double newlines to create paragraphs.
-    const paragraphs = cleanedText.split('\n\n');
+    // 4. Process each block into an HTML element.
+    const htmlBlocks = blocks.map(block => {
+      if (block.startsWith('__CODE_BLOCK_')) {
+        return block; // Keep placeholder as is for now.
+      }
 
-    // 4. Map each paragraph to a <p> tag, converting single newlines inside to <br>,
-    //    and filter out any empty paragraphs that might result from extra newlines.
-    return paragraphs
-      .map(para => {
-        if (para.trim()) {
-          const paraWithBreaks = para.replace(/\n/g, '<br>');
-          return `<p>${paraWithBreaks}</p>`;
-        }
-        return '';
-      })
-      .join('');
+      const trimmedBlock = block.trim();
+      if (!trimmedBlock) return '';
+
+      // Check for Unordered List (lines starting with * or -)
+      if (/^([\*\-]\s)/m.test(trimmedBlock)) {
+        const items = trimmedBlock.split('\n').map(line => {
+          const itemContent = line.replace(/^[\*\-]\s/, '');
+          return `<li>${applyInlineMarkdown(itemContent)}</li>`;
+        }).join('');
+        return `<ul>${items}</ul>`;
+      }
+
+      // Check for Ordered List (lines starting with 1., 2., etc.)
+      if (/^(\d+\.\s)/m.test(trimmedBlock)) {
+        const items = trimmedBlock.split('\n').map(line => {
+          const itemContent = line.replace(/^\d+\.\s/, '');
+          return `<li>${applyInlineMarkdown(itemContent)}</li>`;
+        }).join('');
+        return `<ol>${items}</ol>`;
+      }
+      
+      // Otherwise, treat as a paragraph.
+      // Apply inline markdown and convert single newlines within the paragraph to <br>.
+      const paraWithInline = applyInlineMarkdown(trimmedBlock);
+      const paraWithBreaks = paraWithInline.replace(/\n/g, '<br>');
+      return `<p>${paraWithBreaks}</p>`;
+    });
+
+    // 5. Join the processed blocks and restore the real code blocks from placeholders.
+    let finalHtml = htmlBlocks.join('');
+    // This regex handles placeholders that might have been wrapped in <p> tags or stand alone.
+    finalHtml = finalHtml.replace(/<p>__CODE_BLOCK_(\d+)__<\/p>|__CODE_BLOCK_(\d+)__/g, (match, index1, index2) => {
+      const index = index1 || index2;
+      return codeBlocks[parseInt(index, 10)];
+    });
+
+    return finalHtml;
   }
 });

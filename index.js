@@ -23,16 +23,20 @@ app.listen(PORT, () => {
 });
 
 app.post('/api/chat', async (req, res) => {
-    const { message } = req.body;
+    const originalUserMessage = req.body.message;
 
-    if (!message){
+    if (!originalUserMessage){
         return res.status(400).json({error: 'Message is required.'});
     }
 
     try {
+        // Instruct Gemini to respond using Markdown format.
+        // Your frontend code will safely parse this into HTML.
+        const instructedMessage = `Please provide your response using standard Markdown for formatting (e.g., **bold**, *italics*, \`code\`, lists with - or *, and code blocks with \`\`\`). Do not use HTML tags in your response. User's message: "${originalUserMessage}"`;
+
         const result = await genAI.models.generateContent({
             model: 'gemini-2.0-flash',
-            contents: message
+            contents: instructedMessage
         });
         const text = result.text;
 
